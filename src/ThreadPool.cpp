@@ -63,9 +63,7 @@ void *ThreadPool::worker(void *arg) {
 
 void ThreadPool::run() {
   while (!stop_) {
-    free_thread_stat_.post();
     task_queue_stat_.wait();
-
     task_queue_locker_.lock();
     if (task_queue_.empty()) {
       task_queue_locker_.unlock();
@@ -78,10 +76,11 @@ void ThreadPool::run() {
       continue;
     }
     task->run();
+    free_thread_stat_.post();
   }
 }
 
-bool ThreadPool::increase_a_thread() {
+void ThreadPool::increase_a_thread() {
   pthread_t thread;
   if (pthread_create(&thread, nullptr, worker, this) != 0) {
     throw std::exception();
@@ -89,10 +88,12 @@ bool ThreadPool::increase_a_thread() {
   threads_locker_.lock();
   threads_.push_back(thread);
   created_thread_num_++;
-  printf("The current number of threads is %d.\n", created_thread_num_);
   threads_locker_.unlock();
+  printf("The current number of threads is %d.\n", created_thread_num_);
+  free_thread_stat_.post();
   if (pthread_detach(thread)) {
+    printf("pthread_detach error \n");
     throw std::exception();
   }
-  return true;
+//  return true;
 }

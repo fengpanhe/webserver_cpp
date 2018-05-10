@@ -1,6 +1,6 @@
 #include "http_conn.h"
-#include "locker.h"
 #include "epollFunctions.h"
+#include "locker.h"
 const char *ok_200_title = "OK";
 const char *error_400_title = "Bad Request";
 const char *error_400_form =
@@ -16,27 +16,27 @@ const char *error_500_form =
     "There was an unusual problem serving the requested file.\n";
 const char *doc_root = "../html";
 
-
 int http_conn::m_user_count = 0;
 int http_conn::m_epollfd = -1;
-
+RequestHandler *http_conn::default_request_handler_ = new DefaultRequestHandler();
+std::vector<std::pair<char *, RequestHandler *>> http_conn::handlers_;
 void http_conn::close_conn(bool real_close) {
-  if (real_close && (m_sockfd != -1)) {
-    // modfd( m_epollfd, m_sockfd, EPOLLIN );
-    removefd(m_epollfd, m_sockfd);
-    m_sockfd = -1;
+  if (real_close && (sockfd_!=-1)) {
+    // modfd( m_epollfd, sockfd_, EPOLLIN );
+    removefd(m_epollfd, sockfd_);
+    sockfd_ = -1;
     m_user_count--;
   }
 }
 
 void http_conn::init(int sockfd, const sockaddr_in &addr) {
-  m_sockfd = sockfd;
-  m_address = addr;
+  sockfd_ = sockfd;
+  address_ = addr;
   int error = 0;
   socklen_t len = sizeof(error);
-  getsockopt(m_sockfd, SOL_SOCKET, SO_ERROR, &error, &len);
+  getsockopt(sockfd_, SOL_SOCKET, SO_ERROR, &error, &len);
   int reuse = 1;
-  setsockopt(m_sockfd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+  setsockopt(sockfd_, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
   addfd(m_epollfd, sockfd, true);
   m_user_count++;
 
@@ -44,41 +44,41 @@ void http_conn::init(int sockfd, const sockaddr_in &addr) {
 }
 
 void http_conn::init() {
-  m_check_state = CHECK_STATE_REQUESTLINE;
-  m_linger = false;
+  check_state_ = CHECK_STATE_REQUESTLINE;
+  linger_ = false;
 
-  m_method = GET;
-  m_url = 0;
-  m_version = 0;
-  m_content_length = 0;
-  m_host = 0;
-  m_start_line = 0;
-  m_checked_idx = 0;
-  m_read_idx = 0;
-  m_write_idx = 0;
-  memset(m_read_buf, '\0', READ_BUFFER_SIZE);
-  memset(m_write_buf, '\0', WRITE_BUFFER_SIZE);
-  memset(m_real_file, '\0', FILENAME_LEN);
+  method_ = GET;
+  url_ = 0;
+  version_ = 0;
+  content_length_ = 0;
+  host_ = 0;
+  start_line_ = 0;
+  checked_idx_ = 0;
+  read_idx_ = 0;
+  write_idx_ = 0;
+  memset(read_buf_, '\0', READ_BUFFER_SIZE);
+  memset(write_buf_, '\0', WRITE_BUFFER_SIZE);
+  memset(real_file_, '\0', FILENAME_LEN);
 }
 
 http_conn::LINE_STATUS http_conn::parse_line() {
   char temp;
-  for (; m_checked_idx < m_read_idx; ++m_checked_idx) {
-    temp = m_read_buf[m_checked_idx];
-    if (temp == '\r') {
-      if ((m_checked_idx + 1) == m_read_idx) {
+  for (; checked_idx_ < read_idx_; ++checked_idx_) {
+    temp = read_buf_[checked_idx_];
+    if (temp=='\r') {
+      if ((checked_idx_ + 1)==read_idx_) {
         return LINE_OPEN;
-      } else if (m_read_buf[m_checked_idx + 1] == '\n') {
-        m_read_buf[m_checked_idx++] = '\0';
-        m_read_buf[m_checked_idx++] = '\0';
+      } else if (read_buf_[checked_idx_ + 1]=='\n') {
+        read_buf_[checked_idx_++] = '\0';
+        read_buf_[checked_idx_++] = '\0';
         return LINE_OK;
       }
 
       return LINE_BAD;
-    } else if (temp == '\n') {
-      if ((m_checked_idx > 1) && (m_read_buf[m_checked_idx - 1] == '\r')) {
-        m_read_buf[m_checked_idx - 1] = '\0';
-        m_read_buf[m_checked_idx++] = '\0';
+    } else if (temp=='\n') {
+      if ((checked_idx_ > 1) && (read_buf_[checked_idx_ - 1]=='\r')) {
+        read_buf_[checked_idx_ - 1] = '\0';
+        read_buf_[checked_idx_++] = '\0';
         return LINE_OK;
       }
       return LINE_BAD;
@@ -89,92 +89,95 @@ http_conn::LINE_STATUS http_conn::parse_line() {
 }
 
 bool http_conn::read() {
-  if (m_read_idx >= READ_BUFFER_SIZE) {
+  if (read_idx_ >= READ_BUFFER_SIZE) {
     return false;
   }
 
   int bytes_read = 0;
   while (true) {
-    bytes_read = recv(m_sockfd, m_read_buf + m_read_idx,
-                      READ_BUFFER_SIZE - m_read_idx, 0);
-    if (bytes_read == -1) {
-      if (errno == EAGAIN || errno == EWOULDBLOCK) {
+    bytes_read = static_cast<int>(
+        recv(sockfd_, read_buf_ + read_idx_,
+             static_cast<size_t>(READ_BUFFER_SIZE - read_idx_), 0));
+    if (bytes_read==-1) {
+      if (errno==EAGAIN || errno==EWOULDBLOCK) {
         break;
       }
       return false;
-    } else if (bytes_read == 0) {
+    } else if (bytes_read==0) {
       return false;
     }
 
-    m_read_idx += bytes_read;
+    read_idx_ += bytes_read;
   }
   return true;
 }
 
 http_conn::HTTP_CODE http_conn::parse_request_line(char *text) {
-  m_url = strpbrk(text, " \t");
-  if (!m_url) {
+  url_ = strpbrk(text, " \t");
+  if (!url_) {
     return BAD_REQUEST;
   }
-  *m_url++ = '\0';
+  *url_++ = '\0';
 
   char *method = text;
-  if (strcasecmp(method, "GET") == 0) {
-    m_method = GET;
+  if (strcasecmp(method, "GET")==0) {
+    method_ = GET;
+  } else if (strcasecmp(method, "POST")==0) {
+    method_ = POST;
+  } else if (strcasecmp(method, "HEAD")==0) {
+    method_ = HEAD;
+  } else if (strcasecmp(method, "PUT")==0) {
+    method_ = PUT;
   } else {
     return BAD_REQUEST;
   }
 
-  m_url += strspn(m_url, " \t");
-  m_version = strpbrk(m_url, " \t");
-  if (!m_version) {
+  url_ += strspn(url_, " \t");
+  version_ = strpbrk(url_, " \t");
+  if (!version_) {
     return BAD_REQUEST;
   }
-  *m_version++ = '\0';
-  m_version += strspn(m_version, " \t");
-  if (strcasecmp(m_version, "HTTP/1.1") != 0) {
-    return BAD_REQUEST;
-  }
-
-  if (strncasecmp(m_url, "http://", 7) == 0) {
-    m_url += 7;
-    m_url = strchr(m_url, '/');
-  }
-
-  if (!m_url || m_url[0] != '/') {
+  *version_++ = '\0';
+  version_ += strspn(version_, " \t");
+  if (strcasecmp(version_, "HTTP/1.1")!=0) {
     return BAD_REQUEST;
   }
 
-  m_check_state = CHECK_STATE_HEADER;
+  if (strncasecmp(url_, "http://", 7)==0) {
+    url_ += 7;
+    url_ = strchr(url_, '/');
+  }
+
+  if (!url_ || url_[0]!='/') {
+    return BAD_REQUEST;
+  }
+
+  check_state_ = CHECK_STATE_HEADER;
   return NO_REQUEST;
 }
 
 http_conn::HTTP_CODE http_conn::parse_headers(char *text) {
-  if (text[0] == '\0') {
-    if (m_method == HEAD) {
-      return GET_REQUEST;
-    }
-
-    if (m_content_length != 0) {
-      m_check_state = CHECK_STATE_CONTENT;
+  if (text[0]=='\0') {
+    //  若content_length_不为0，则转为到CHECK_STATE_CONTENT状态
+    if (content_length_!=0) {
+      check_state_ = CHECK_STATE_CONTENT;
       return NO_REQUEST;
     }
-
-    return GET_REQUEST;
-  } else if (strncasecmp(text, "Connection:", 11) == 0) {
+    return YES_REQUEST;
+  } else if (strncasecmp(text, "Connection:", 11)==0) {
     text += 11;
     text += strspn(text, " \t");
-    if (strcasecmp(text, "keep-alive") == 0) {
-      m_linger = true;
+    if (strcasecmp(text, "keep-alive")==0) {
+      linger_ = true;
     }
-  } else if (strncasecmp(text, "Content-Length:", 15) == 0) {
+  } else if (strncasecmp(text, "Content-Length:", 15)==0) {
     text += 15;
     text += strspn(text, " \t");
-    m_content_length = atol(text);
-  } else if (strncasecmp(text, "Host:", 5) == 0) {
+    content_length_ = static_cast<int>(atol(text));
+  } else if (strncasecmp(text, "Host:", 5)==0) {
     text += 5;
     text += strspn(text, " \t");
-    m_host = text;
+    host_ = text;
   } else {
     printf("oop! unknow header %s\n", text);
   }
@@ -183,51 +186,53 @@ http_conn::HTTP_CODE http_conn::parse_headers(char *text) {
 }
 
 http_conn::HTTP_CODE http_conn::parse_content(char *text) {
-  if (m_read_idx >= (m_content_length + m_checked_idx)) {
-    text[m_content_length] = '\0';
-    return GET_REQUEST;
+  //  printf("content:%s\n", text);
+  if (read_idx_ >= (content_length_ + checked_idx_)) {
+    text[content_length_] = '\0';
+    return YES_REQUEST;
   }
-
   return NO_REQUEST;
 }
 
 http_conn::HTTP_CODE http_conn::process_read() {
   LINE_STATUS line_status = LINE_OK;
   HTTP_CODE ret = NO_REQUEST;
-  char *text = 0;
+  char *text = nullptr;
 
-  while (((m_check_state == CHECK_STATE_CONTENT) && (line_status == LINE_OK)) ||
-         ((line_status = parse_line()) == LINE_OK)) {
+  while (((check_state_==CHECK_STATE_CONTENT) && (line_status==LINE_OK)) ||
+      ((line_status = parse_line())==LINE_OK)) {
     text = get_line();
-    m_start_line = m_checked_idx;
+    start_line_ = checked_idx_;
     printf("got 1 http line: %s\n", text);
 
-    switch (m_check_state) {
-    case CHECK_STATE_REQUESTLINE: {
-      ret = parse_request_line(text);
-      if (ret == BAD_REQUEST) {
-        return BAD_REQUEST;
+    switch (check_state_) {
+      case CHECK_STATE_REQUESTLINE: {
+        ret = parse_request_line(text);
+        if (ret==BAD_REQUEST) {
+          return BAD_REQUEST;
+        }
+        break;
       }
-      break;
-    }
-    case CHECK_STATE_HEADER: {
-      ret = parse_headers(text);
-      if (ret == BAD_REQUEST) {
-        return BAD_REQUEST;
-      } else if (ret == GET_REQUEST) {
-        return do_request();
+      case CHECK_STATE_HEADER: {
+        ret = parse_headers(text);
+        if (ret==BAD_REQUEST) {
+          return BAD_REQUEST;
+        } else if (ret==YES_REQUEST) {
+          return do_request();
+        }
+        this->content_ = text + 2;
+        break;
       }
-      break;
-    }
-    case CHECK_STATE_CONTENT: {
-      ret = parse_content(text);
-      if (ret == GET_REQUEST) {
-        return do_request();
+      case CHECK_STATE_CONTENT: {
+        ret = parse_content(text);
+        if (ret==YES_REQUEST) {
+          printf("parse_content\n");
+          return do_request();
+        }
+        line_status = LINE_OPEN;
+        break;
       }
-      line_status = LINE_OPEN;
-      break;
-    }
-    default: { return INTERNAL_ERROR; }
+      default: { return INTERNAL_ERROR; }
     }
   }
 
@@ -235,50 +240,81 @@ http_conn::HTTP_CODE http_conn::process_read() {
 }
 
 http_conn::HTTP_CODE http_conn::do_request() {
-  strcpy(m_real_file, doc_root);
-  int len = strlen(doc_root);
-  strncpy(m_real_file + len, m_url, FILENAME_LEN - len - 1);
-  if (stat(m_real_file, &m_file_stat) < 0) {
-    return NO_RESOURCE;
-  }
+  switch (method_) {
+    case GET: {
 
-  if (!(m_file_stat.st_mode & S_IROTH)) {
-    return FORBIDDEN_REQUEST;
-  }
+      default_request_handler_->get(this);
+      for (auto &it : handlers_) {
+        if (strcasecmp(it.first, this->url_)==0) {
+          it.second->get(this);
+          break;
+        }
+      }
 
-  if (S_ISDIR(m_file_stat.st_mode)) {
-    return BAD_REQUEST;
-  }
+      strcpy(real_file_, doc_root);
+      auto len = static_cast<int>(strlen(doc_root));
+      strncpy(real_file_ + len, this->file_relative_path_,
+              static_cast<size_t>(FILENAME_LEN - len - 1));
+      if (stat(real_file_, &file_stat_) < 0) {
+        return NO_RESOURCE;
+      }
 
-  int fd = open(m_real_file, O_RDONLY);
-  m_file_address =
-      (char *)mmap(0, m_file_stat.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
-  close(fd);
-  return FILE_REQUEST;
+      if (!(file_stat_.st_mode & S_IROTH)) {
+        return FORBIDDEN_REQUEST;
+      }
+
+      if (S_ISDIR(file_stat_.st_mode)) {
+        return BAD_REQUEST;
+      }
+
+      int fd = open(real_file_, O_RDONLY);
+      file_address_ =
+          (char *) mmap(0, file_stat_.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+      close(fd);
+      return FILE_REQUEST;
+      break;
+    }
+    case POST: {
+      default_request_handler_->post(this);
+      for (auto &it : handlers_) {
+        if (strcasecmp(it.first, this->url_)==0) {
+          it.second->post(this);
+          break;
+        }
+      }
+      return POST_REQUEST;
+      break;
+    }
+  }
 }
 
 void http_conn::unmap() {
-  if (m_file_address) {
-    munmap(m_file_address, m_file_stat.st_size);
-    m_file_address = 0;
+  if (file_address_) {
+    munmap(file_address_, file_stat_.st_size);
+    file_address_ = nullptr;
+  }
+  if (this->response_content_address_) {
+    delete response_content_address_;
+    response_content_address_ = nullptr;
+    response_content_length_ = 0;
   }
 }
 
 bool http_conn::write() {
   int temp = 0;
   int bytes_have_send = 0;
-  int bytes_to_send = m_write_idx;
-  if (bytes_to_send == 0) {
-    modfd(m_epollfd, m_sockfd, EPOLLIN);
+  int bytes_to_send = write_idx_;
+  if (bytes_to_send==0) {
+    modfd(m_epollfd, sockfd_, EPOLLIN);
     init();
     return true;
   }
 
   while (1) {
-    temp = writev(m_sockfd, m_iv, m_iv_count);
+    temp = writev(sockfd_, iv_, iv_count_);
     if (temp <= -1) {
-      if (errno == EAGAIN) {
-        modfd(m_epollfd, m_sockfd, EPOLLOUT);
+      if (errno==EAGAIN) {
+        modfd(m_epollfd, sockfd_, EPOLLOUT);
         return true;
       }
       unmap();
@@ -289,12 +325,12 @@ bool http_conn::write() {
     bytes_have_send += temp;
     if (bytes_to_send <= bytes_have_send) {
       unmap();
-      if (m_linger) {
+      if (linger_) {
         init();
-        modfd(m_epollfd, m_sockfd, EPOLLIN);
+        modfd(m_epollfd, sockfd_, EPOLLIN);
         return true;
       } else {
-        modfd(m_epollfd, m_sockfd, EPOLLIN);
+        modfd(m_epollfd, sockfd_, EPOLLIN);
         return false;
       }
     }
@@ -302,17 +338,17 @@ bool http_conn::write() {
 }
 
 bool http_conn::add_response(const char *format, ...) {
-  if (m_write_idx >= WRITE_BUFFER_SIZE) {
+  if (write_idx_ >= WRITE_BUFFER_SIZE) {
     return false;
   }
   va_list arg_list;
   va_start(arg_list, format);
-  int len = vsnprintf(m_write_buf + m_write_idx,
-                      WRITE_BUFFER_SIZE - 1 - m_write_idx, format, arg_list);
-  if (len >= (WRITE_BUFFER_SIZE - 1 - m_write_idx)) {
+  int len = vsnprintf(write_buf_ + write_idx_,
+                      WRITE_BUFFER_SIZE - 1 - write_idx_, format, arg_list);
+  if (len >= (WRITE_BUFFER_SIZE - 1 - write_idx_)) {
     return false;
   }
-  m_write_idx += len;
+  write_idx_ += len;
   va_end(arg_list);
   return true;
 }
@@ -333,7 +369,7 @@ bool http_conn::add_content_length(int content_len) {
 
 bool http_conn::add_linger() {
   return add_response("Connection: %s\r\n",
-                      (m_linger == true) ? "keep-alive" : "close");
+                      (linger_==true) ? "keep-alive" : "close");
 }
 
 bool http_conn::add_blank_line() { return add_response("%s", "\r\n"); }
@@ -344,69 +380,87 @@ bool http_conn::add_content(const char *content) {
 
 bool http_conn::process_write(HTTP_CODE ret) {
   switch (ret) {
-  case INTERNAL_ERROR: {
-    add_status_line(500, error_500_title);
-    add_headers(strlen(error_500_form));
-    if (!add_content(error_500_form)) {
-      return false;
-    }
-    break;
-  }
-  case BAD_REQUEST: {
-    add_status_line(400, error_400_title);
-    add_headers(strlen(error_400_form));
-    if (!add_content(error_400_form)) {
-      return false;
-    }
-    break;
-  }
-  case NO_RESOURCE: {
-    add_status_line(404, error_404_title);
-    add_headers(strlen(error_404_form));
-    if (!add_content(error_404_form)) {
-      return false;
-    }
-    break;
-  }
-  case FORBIDDEN_REQUEST: {
-    add_status_line(403, error_403_title);
-    add_headers(strlen(error_403_form));
-    if (!add_content(error_403_form)) {
-      return false;
-    }
-    break;
-  }
-  case FILE_REQUEST: {
-    add_status_line(200, ok_200_title);
-    if (m_file_stat.st_size != 0) {
-      add_headers(m_file_stat.st_size);
-      m_iv[0].iov_base = m_write_buf;
-      m_iv[0].iov_len = m_write_idx;
-      m_iv[1].iov_base = m_file_address;
-      m_iv[1].iov_len = m_file_stat.st_size;
-      m_iv_count = 2;
-      return true;
-    } else {
-      const char *ok_string = "<html><body></body></html>";
-      add_headers(strlen(ok_string));
-      if (!add_content(ok_string)) {
+    case INTERNAL_ERROR: {
+      add_status_line(500, error_500_title);
+      add_headers(strlen(error_500_form));
+      if (!add_content(error_500_form)) {
         return false;
       }
+      break;
     }
-  }
-  default: { return false; }
+    case BAD_REQUEST: {
+      add_status_line(400, error_400_title);
+      add_headers(strlen(error_400_form));
+      if (!add_content(error_400_form)) {
+        return false;
+      }
+      break;
+    }
+    case NO_RESOURCE: {
+      add_status_line(404, error_404_title);
+      add_headers(strlen(error_404_form));
+      if (!add_content(error_404_form)) {
+        return false;
+      }
+      break;
+    }
+    case FORBIDDEN_REQUEST: {
+      add_status_line(403, error_403_title);
+      add_headers(strlen(error_403_form));
+      if (!add_content(error_403_form)) {
+        return false;
+      }
+      break;
+    }
+    case FILE_REQUEST: {
+      add_status_line(200, ok_200_title);
+      if (file_stat_.st_size!=0) {
+        add_headers(file_stat_.st_size);
+        iv_[0].iov_base = write_buf_;
+        iv_[0].iov_len = write_idx_;
+        iv_[1].iov_base = file_address_;
+        iv_[1].iov_len = file_stat_.st_size;
+        iv_count_ = 2;
+        return true;
+      } else {
+        const char *ok_string = "<html><body></body></html>";
+        add_headers(strlen(ok_string));
+        if (!add_content(ok_string)) {
+          return false;
+        }
+      }
+    }
+    case POST_REQUEST: {
+      add_status_line(200, ok_200_title);
+      if (response_content_length_ != 0) {
+        add_headers(response_content_length_);
+        iv_[0].iov_base = write_buf_;
+        iv_[0].iov_len = write_idx_;
+        iv_[1].iov_base = response_content_address_;
+        iv_[1].iov_len = response_content_length_;
+        iv_count_ = 2;
+        return true;
+      } else {
+        const char *ok_string = "<html><body></body></html>";
+        add_headers(strlen(ok_string));
+        if (!add_content(ok_string)) {
+          return false;
+        }
+      }
+    }
+    default: { return false; }
   }
 
-  m_iv[0].iov_base = m_write_buf;
-  m_iv[0].iov_len = m_write_idx;
-  m_iv_count = 1;
+  iv_[0].iov_base = write_buf_;
+  iv_[0].iov_len = write_idx_;
+  iv_count_ = 1;
   return true;
 }
 
 void http_conn::run() {
   HTTP_CODE read_ret = process_read();
-  if (read_ret == NO_REQUEST) {
-    modfd(m_epollfd, m_sockfd, EPOLLIN);
+  if (read_ret==NO_REQUEST) {
+    modfd(m_epollfd, sockfd_, EPOLLIN);
     return;
   }
 
@@ -415,5 +469,38 @@ void http_conn::run() {
     close_conn();
   }
 
-  modfd(m_epollfd, m_sockfd, EPOLLOUT);
+  modfd(m_epollfd, sockfd_, EPOLLOUT);
+}
+const char *http_conn::getUrl() {
+  return this->url_;
+}
+bool http_conn::setFileRelativePath(const char *file_path) {
+  if (FILENAME_LEN >= strlen(file_path)) {
+    strcpy(file_relative_path_, file_path);
+    return true;
+  }
+  return false;
+}
+bool http_conn::addHandler(const char *match_url, RequestHandler *request_handler) {
+  auto *url = new char[strlen(match_url)];
+  strcpy(url, match_url);
+  handlers_.emplace_back(url, request_handler);
+  return true;
+}
+http_conn::~http_conn() {
+  for (auto &it : handlers_) {
+    delete it.first;
+    delete it.second;
+  }
+  delete default_request_handler_;
+}
+const char *http_conn::getContent(int &content_len_) {
+  content_len_ = this->content_length_;
+  return this->content_;
+}
+bool http_conn::setResponseContent(const char *content) {
+  response_content_length_ = static_cast<int>(strlen(content));
+  response_content_address_ = new char[response_content_length_];
+  strcpy(this->response_content_address_, content);
+  return true;
 }

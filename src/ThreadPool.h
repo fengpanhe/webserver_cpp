@@ -22,7 +22,7 @@ public:
 private:
   static void *worker(void *arg);
   void run();
-  bool increase_a_thread();
+  void increase_a_thread();
 
 private:
   int max_thread_num_; // 最大线程数量，若为零，则表示不限制线程的数量

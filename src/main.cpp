@@ -14,6 +14,7 @@
 #include "epollFunctions.h"
 #include "http_conn.h"
 #include "locker.h"
+#include "handler/IndexHandler.h"
 
 #define MAX_FD 65536
 #define MAX_EVENT_NUMBER 10000
@@ -79,6 +80,7 @@ int main(int argc, char *argv[]) {
   assert(epollfd != -1);
   addfd(epollfd, listenfd, false);
   http_conn::m_epollfd = epollfd;
+  http_conn::addHandler("/index", new IndexRequestHandler());
 
   int task_num = 0;
   while (true) {
@@ -115,7 +117,7 @@ int main(int argc, char *argv[]) {
         } else {
           users[sockfd].close_conn();
         }
-      } else if (events[i].events & EPOLLOUT) {
+      } else if (events[i].events & EPOLLOUT) { 
         if (!users[sockfd].write()) {
           users[sockfd].close_conn();
         }
