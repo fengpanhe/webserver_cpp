@@ -48,10 +48,10 @@ void http_conn::init() {
   linger_ = false;
 
   method_ = GET;
-  url_ = 0;
-  version_ = 0;
+  url_ = nullptr;
+  version_ = nullptr;
   content_length_ = 0;
-  host_ = 0;
+  host_ = nullptr;
   start_line_ = 0;
   checked_idx_ = 0;
   read_idx_ = 0;
@@ -285,12 +285,13 @@ http_conn::HTTP_CODE http_conn::do_request() {
       return POST_REQUEST;
       break;
     }
+    default: { return BAD_REQUEST; }
   }
 }
 
 void http_conn::unmap() {
   if (file_address_) {
-    munmap(file_address_, file_stat_.st_size);
+    munmap(file_address_, static_cast<size_t>(file_stat_.st_size));
     file_address_ = nullptr;
   }
   if (this->response_content_address_) {
@@ -310,8 +311,8 @@ bool http_conn::write() {
     return true;
   }
 
-  while (1) {
-    temp = writev(sockfd_, iv_, iv_count_);
+  while (true) {
+    temp = static_cast<int>(writev(sockfd_, iv_, iv_count_));
     if (temp <= -1) {
       if (errno==EAGAIN) {
         modfd(m_epollfd, sockfd_, EPOLLOUT);
@@ -344,7 +345,7 @@ bool http_conn::add_response(const char *format, ...) {
   va_list arg_list;
   va_start(arg_list, format);
   int len = vsnprintf(write_buf_ + write_idx_,
-                      WRITE_BUFFER_SIZE - 1 - write_idx_, format, arg_list);
+                      static_cast<size_t>(WRITE_BUFFER_SIZE - 1 - write_idx_), format, arg_list);
   if (len >= (WRITE_BUFFER_SIZE - 1 - write_idx_)) {
     return false;
   }
@@ -369,7 +370,7 @@ bool http_conn::add_content_length(int content_len) {
 
 bool http_conn::add_linger() {
   return add_response("Connection: %s\r\n",
-                      (linger_==true) ? "keep-alive" : "close");
+                      linger_ ? "keep-alive" : "close");
 }
 
 bool http_conn::add_blank_line() { return add_response("%s", "\r\n"); }
@@ -382,7 +383,7 @@ bool http_conn::process_write(HTTP_CODE ret) {
   switch (ret) {
     case INTERNAL_ERROR: {
       add_status_line(500, error_500_title);
-      add_headers(strlen(error_500_form));
+      add_headers(static_cast<int>(strlen(error_500_form)));
       if (!add_content(error_500_form)) {
         return false;
       }
@@ -390,7 +391,7 @@ bool http_conn::process_write(HTTP_CODE ret) {
     }
     case BAD_REQUEST: {
       add_status_line(400, error_400_title);
-      add_headers(strlen(error_400_form));
+      add_headers(static_cast<int>(strlen(error_400_form)));
       if (!add_content(error_400_form)) {
         return false;
       }
@@ -398,7 +399,7 @@ bool http_conn::process_write(HTTP_CODE ret) {
     }
     case NO_RESOURCE: {
       add_status_line(404, error_404_title);
-      add_headers(strlen(error_404_form));
+      add_headers(static_cast<int>(strlen(error_404_form)));
       if (!add_content(error_404_form)) {
         return false;
       }
@@ -406,7 +407,7 @@ bool http_conn::process_write(HTTP_CODE ret) {
     }
     case FORBIDDEN_REQUEST: {
       add_status_line(403, error_403_title);
-      add_headers(strlen(error_403_form));
+      add_headers(static_cast<int>(strlen(error_403_form)));
       if (!add_content(error_403_form)) {
         return false;
       }
@@ -415,16 +416,16 @@ bool http_conn::process_write(HTTP_CODE ret) {
     case FILE_REQUEST: {
       add_status_line(200, ok_200_title);
       if (file_stat_.st_size!=0) {
-        add_headers(file_stat_.st_size);
+        add_headers(static_cast<int>(file_stat_.st_size));
         iv_[0].iov_base = write_buf_;
-        iv_[0].iov_len = write_idx_;
+        iv_[0].iov_len = static_cast<size_t>(write_idx_);
         iv_[1].iov_base = file_address_;
-        iv_[1].iov_len = file_stat_.st_size;
+        iv_[1].iov_len = static_cast<size_t>(file_stat_.st_size);
         iv_count_ = 2;
         return true;
       } else {
         const char *ok_string = "<html><body></body></html>";
-        add_headers(strlen(ok_string));
+        add_headers(static_cast<int>(strlen(ok_string)));
         if (!add_content(ok_string)) {
           return false;
         }
@@ -435,14 +436,14 @@ bool http_conn::process_write(HTTP_CODE ret) {
       if (response_content_length_ != 0) {
         add_headers(response_content_length_);
         iv_[0].iov_base = write_buf_;
-        iv_[0].iov_len = write_idx_;
+        iv_[0].iov_len = static_cast<size_t>(write_idx_);
         iv_[1].iov_base = response_content_address_;
-        iv_[1].iov_len = response_content_length_;
+        iv_[1].iov_len = static_cast<size_t>(response_content_length_);
         iv_count_ = 2;
         return true;
       } else {
         const char *ok_string = "<html><body></body></html>";
-        add_headers(strlen(ok_string));
+        add_headers(static_cast<int>(strlen(ok_string)));
         if (!add_content(ok_string)) {
           return false;
         }
@@ -452,7 +453,7 @@ bool http_conn::process_write(HTTP_CODE ret) {
   }
 
   iv_[0].iov_base = write_buf_;
-  iv_[0].iov_len = write_idx_;
+  iv_[0].iov_len = static_cast<size_t>(write_idx_);
   iv_count_ = 1;
   return true;
 }

@@ -3,16 +3,16 @@
 
 #include "locker.h"
 #include <arpa/inet.h>
-#include <assert.h>
-#include <errno.h>
+#include <cassert>
+#include <cerrno>
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <pthread.h>
-#include <signal.h>
-#include <stdarg.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+#include <csignal>
+#include <cstdarg>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <sys/epoll.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
@@ -185,7 +185,7 @@ public:
     http_c->setFileRelativePath(http_c->getUrl());
   }
   bool post(http_conn *http_c) override {
-    http_c->setResponseContent("{\"returnCode\": 1, \"roomId\": \"806732\"}");
+    http_c->setResponseContent("{}");
   }
 };
 #endif
