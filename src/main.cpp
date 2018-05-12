@@ -15,6 +15,7 @@
 #include "http_conn.h"
 #include "locker.h"
 #include "handler/IndexHandler.h"
+#include "WebServer.h"
 
 #define MAX_FD 65536
 #define MAX_EVENT_NUMBER 10000
@@ -44,91 +45,96 @@ int main(int argc, char *argv[]) {
   const char *ip = argv[1];
   int port = atoi(argv[2]);
 
-  addsig(SIGPIPE, SIG_IGN);
+  WebServer web_server("../html", 8);
+  web_server.addHandler("/index", new IndexRequestHandler());
+  web_server.setListen("127.0.0.1", 3000);
+  web_server.start();
 
-  ThreadPool *pool = NULL;
-  try {
-    pool = new ThreadPool(0);
-  } catch (...) {
-    return 1;
-  }
-
-  http_conn *users = new http_conn[MAX_FD];
-  assert(users);
-  int user_count = 0;
-
-  int listenfd = socket(PF_INET, SOCK_STREAM, 0);
-  assert(listenfd >= 0);
-  struct linger tmp = {1, 0};
-  setsockopt(listenfd, SOL_SOCKET, SO_LINGER, &tmp, sizeof(tmp));
-
-  int ret = 0;
-  struct sockaddr_in address;
-  bzero(&address, sizeof(address));
-  address.sin_family = AF_INET;
-  inet_pton(AF_INET, ip, &address.sin_addr);
-  address.sin_port = htons(port);
-
-  ret = bind(listenfd, (struct sockaddr *)&address, sizeof(address));
-  assert(ret >= 0);
-
-  ret = listen(listenfd, 5);
-  assert(ret >= 0);
-
-  epoll_event events[MAX_EVENT_NUMBER];
-  int epollfd = epoll_create(5);
-  assert(epollfd != -1);
-  addfd(epollfd, listenfd, false);
-  http_conn::m_epollfd = epollfd;
-  http_conn::addHandler("/index", new IndexRequestHandler());
-
-  int task_num = 0;
-  while (true) {
-    int number = epoll_wait(epollfd, events, MAX_EVENT_NUMBER, -1);
-    if ((number < 0) && (errno != EINTR)) {
-      printf("epoll failure\n");
-      break;
-    }
-
-    for (int i = 0; i < number; i++) {
-      int sockfd = events[i].data.fd;
-      if (sockfd == listenfd) {
-        printf("listenfd");
-        struct sockaddr_in client_address;
-        socklen_t client_addrlength = sizeof(client_address);
-        int connfd = accept(listenfd, (struct sockaddr *)&client_address,
-                            &client_addrlength);
-        if (connfd < 0) {
-          printf("errno is: %d\n", errno);
-          continue;
-        }
-        if (http_conn::m_user_count >= MAX_FD) {
-          show_error(connfd, "Internal server busy");
-          continue;
-        }
-        printf("sockfd:%d", connfd);
-        users[connfd].init(connfd, client_address);
-      } else if (events[i].events & (EPOLLRDHUP | EPOLLHUP | EPOLLERR)) {
-        users[sockfd].close_conn();
-      } else if (events[i].events & EPOLLIN) {
-        if (users[sockfd].read()) {
-          pool->append(users + sockfd);
-          printf("task_num: %d\n", ++task_num);
-        } else {
-          users[sockfd].close_conn();
-        }
-      } else if (events[i].events & EPOLLOUT) { 
-        if (!users[sockfd].write()) {
-          users[sockfd].close_conn();
-        }
-      } else {
-      }
-    }
-  }
-
-  close(epollfd);
-  close(listenfd);
-  delete[] users;
-  delete pool;
-  return 0;
+//  addsig(SIGPIPE, SIG_IGN);
+//
+//  ThreadPool *pool = NULL;
+//  try {
+//    pool = new ThreadPool(0);
+//  } catch (...) {
+//    return 1;
+//  }
+//
+//  http_conn *users = new http_conn[MAX_FD];
+//  assert(users);
+//  int user_count = 0;
+//
+//  int listenfd = socket(PF_INET, SOCK_STREAM, 0);
+//  assert(listenfd >= 0);
+//  struct linger tmp = {1, 0};
+//  setsockopt(listenfd, SOL_SOCKET, SO_LINGER, &tmp, sizeof(tmp));
+//
+//  int ret = 0;
+//  struct sockaddr_in address;
+//  bzero(&address, sizeof(address));
+//  address.sin_family = AF_INET;
+//  inet_pton(AF_INET, ip, &address.sin_addr);
+//  address.sin_port = htons(port);
+//
+//  ret = bind(listenfd, (struct sockaddr *)&address, sizeof(address));
+//  assert(ret >= 0);
+//
+//  ret = listen(listenfd, 5);
+//  assert(ret >= 0);
+//
+//  epoll_event events[MAX_EVENT_NUMBER];
+//  int epollfd = epoll_create(5);
+//  assert(epollfd != -1);
+//  addfd(epollfd, listenfd, false);
+//  http_conn::m_epollfd = epollfd;
+//  http_conn::addHandler("/index", new IndexRequestHandler());
+//
+//  int task_num = 0;
+//  while (true) {
+//    int number = epoll_wait(epollfd, events, MAX_EVENT_NUMBER, -1);
+//    if ((number < 0) && (errno != EINTR)) {
+//      printf("epoll failure\n");
+//      break;
+//    }
+//
+//    for (int i = 0; i < number; i++) {
+//      int sockfd = events[i].data.fd;
+//      if (sockfd == listenfd) {
+//        printf("listenfd");
+//        struct sockaddr_in client_address{};
+//        socklen_t client_addrlength = sizeof(client_address);
+//        int connfd = accept(listenfd, (struct sockaddr *)&client_address,
+//                            &client_addrlength);
+//        if (connfd < 0) {
+//          printf("errno is: %d\n", errno);
+//          continue;
+//        }
+//        if (http_conn::m_user_count >= MAX_FD) {
+//          show_error(connfd, "Internal server busy");
+//          continue;
+//        }
+//        printf("sockfd:%d", connfd);
+//        users[connfd].init(connfd, client_address);
+//      } else if (events[i].events & (EPOLLRDHUP | EPOLLHUP | EPOLLERR)) {
+//        users[sockfd].close_conn();
+//      } else if (events[i].events & EPOLLIN) {
+//        if (users[sockfd].read()) {
+//          pool->append(users + sockfd);
+//          printf("task_num: %d\n", ++task_num);
+//        } else {
+//          users[sockfd].close_conn();
+//        }
+//      } else if (events[i].events & EPOLLOUT) {
+//        if (!users[sockfd].write()) {
+//          users[sockfd].close_conn();
+//        }
+//      } else {
+//      }
+//    }
+//  }
+//
+//  close(epollfd);
+//  close(listenfd);
+//  delete[] users;
+//  delete pool;
+//  return 0;
 }

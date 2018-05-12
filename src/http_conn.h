@@ -91,11 +91,13 @@ public:
   // 添加对匹配的url的处理对象
   static bool addHandler(const char * match_url, RequestHandler * request_handler);
 //  bool deleteHandler(const char * match_url);
+  static bool setDocRootPath(const char *root_path);
 
   static int m_epollfd;
   static int m_user_count;
   static RequestHandler *default_request_handler_;
   static std::vector<std::pair<char *, RequestHandler *>> handlers_;
+  static char *doc_root_;
 
 private:
   // 初始化连接

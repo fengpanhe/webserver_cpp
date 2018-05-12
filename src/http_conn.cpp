@@ -14,12 +14,14 @@ const char *error_404_form =
 const char *error_500_title = "Internal Error";
 const char *error_500_form =
     "There was an unusual problem serving the requested file.\n";
-const char *doc_root = "../html";
+//const char *doc_root_ = "../html";
 
 int http_conn::m_user_count = 0;
 int http_conn::m_epollfd = -1;
 RequestHandler *http_conn::default_request_handler_ = new DefaultRequestHandler();
 std::vector<std::pair<char *, RequestHandler *>> http_conn::handlers_;
+char * http_conn::doc_root_ = nullptr;
+
 void http_conn::close_conn(bool real_close) {
   if (real_close && (sockfd_!=-1)) {
     // modfd( m_epollfd, sockfd_, EPOLLIN );
@@ -251,8 +253,8 @@ http_conn::HTTP_CODE http_conn::do_request() {
         }
       }
 
-      strcpy(real_file_, doc_root);
-      auto len = static_cast<int>(strlen(doc_root));
+      strcpy(real_file_, doc_root_);
+      auto len = static_cast<int>(strlen(doc_root_));
       strncpy(real_file_ + len, this->file_relative_path_,
               static_cast<size_t>(FILENAME_LEN - len - 1));
       if (stat(real_file_, &file_stat_) < 0) {
@@ -493,7 +495,14 @@ http_conn::~http_conn() {
     delete it.first;
     delete it.second;
   }
-  delete default_request_handler_;
+  if(default_request_handler_ != nullptr){
+    delete default_request_handler_;
+  }
+
+  if(doc_root_ != nullptr){
+    delete doc_root_;
+    doc_root_ = nullptr;
+  }
 }
 const char *http_conn::getContent(int &content_len_) {
   content_len_ = this->content_length_;
@@ -503,5 +512,13 @@ bool http_conn::setResponseContent(const char *content) {
   response_content_length_ = static_cast<int>(strlen(content));
   response_content_address_ = new char[response_content_length_];
   strcpy(this->response_content_address_, content);
+  return true;
+}
+bool http_conn::setDocRootPath(const char *root_path) {
+  if(doc_root_ != nullptr){
+    delete doc_root_;
+  }
+  doc_root_ = new char[strlen(root_path)];
+  strcpy(doc_root_, root_path);
   return true;
 }
